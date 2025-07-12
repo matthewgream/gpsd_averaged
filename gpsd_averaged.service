@@ -1,0 +1,14 @@
+[Unit]
+Description=GPS Position Averaging Daemon
+After=gpsd.service
+Requires=gpsd.service
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/gpsd_averaged
+ExecStart=/usr/local/bin/gpsd_averaged $GPSD_AVERAGED_OPTIONS
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
