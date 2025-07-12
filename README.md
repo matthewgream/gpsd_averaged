@@ -1,3 +1,4 @@
+Simple mechanism to average gnss positions from gpsd and re-present them on a tcp port in json. For an anchored position, on a consumer grade ublox gnss device, this can quickly stablise to a planar uncertainty of ~1.25m and near zero vertically. Included are systemd service files (plus those also for gpsd).
 
 ```
 root@workshop:/opt/gpsd_averaged# ./gpsd_averaged --help
@@ -35,4 +36,10 @@ STATUS: filter=kalman/anchored, fixes=124/1246, lat=51.50090099, lon=-0.20676544
 STATUS: filter=kalman/anchored, fixes=129/1271, lat=51.50090074, lon=-0.20676577, alt=16.4, stddev_m=0.49/0.59/0.50, window=129, outliers=125, move_3d=0.01m (h=0.00m v=0.01m), conf=1.5m [CONVERGED], kalman=lat:8.62e-11/lon:8.62e-11/alt:7.79e-01/uncertainty:1.50m
 STATUS: filter=kalman/anchored, fixes=134/1296, lat=51.50090056, lon=-0.20676578, alt=16.5, stddev_m=0.49/0.58/0.51, window=134, outliers=125, move_3d=0.01m (h=0.00m v=0.01m), conf=1.5m [CONVERGED], kalman=lat:8.54e-11/lon:8.54e-11/alt:7.51e-01/uncertainty:1.49m
 STATUS: filter=kalman/anchored, fixes=139/1320, lat=51.50090050, lon=-0.20676551, alt=16.5, stddev_m=0.48/0.57/0.52, window=139, outliers=125, move_3d=0.00m (h=0.00m v=0.00m), conf=1.5m [CONVERGED], kalman=lat:8.47e-11/lon:8.47e-11/alt:7.24e-01/uncertainty:1.48m
+...
+STATUS: filter=kalman/anchored, fixes=626/4896, lat=51.50089863, lon=-0.20675994, alt=15.0, stddev_m=0.32/1.05/1.35, window=300, outliers=353, move_3d=0.01m (h=0.01m v=0.00m), conf=2.2m [CONVERGED], kalman=lat:7.95e-11/lon:7.95e-11/alt:1.80e-01/uncertainty:1.24m
+STATUS: filter=kalman/anchored, fixes=631/4920, lat=51.50089895, lon=-0.20676030, alt=15.0, stddev_m=0.33/1.05/1.37, window=300, outliers=353, move_3d=0.01m (h=0.01m v=0.01m), conf=2.2m [CONVERGED], kalman=lat:7.95e-11/lon:7.95e-11/alt:1.79e-01/uncertainty:1.24m
+STATUS: filter=kalman/anchored, fixes=636/4946, lat=51.50089942, lon=-0.20676051, alt=15.0, stddev_m=0.36/1.03/1.37, window=300, outliers=353, move_3d=0.01m (h=0.01m v=0.00m), conf=2.2m [CONVERGED], kalman=lat:7.95e-11/lon:7.95e-11/alt:1.78e-01/uncertainty:1.24m
+STATUS: filter=kalman/anchored, fixes=641/4971, lat=51.50090001, lon=-0.20676065, alt=15.0, stddev_m=0.39/1.02/1.38, window=300, outliers=353, move_3d=0.01m (h=0.01m v=0.00m), conf=2.2m [CONVERGED], kalman=lat:7.95e-11/lon:7.95e-11/alt:1.77e-01/uncertainty:1.24m
+STATUS: filter=kalman/anchored, fixes=646/4996, lat=51.50090073, lon=-0.20676076, alt=15.0, stddev_m=0.44/1.00/1.38, window=300, outliers=353, move_3d=0.01m (h=0.01m v=0.00m), conf=2.2m [CONVERGED], kalman=lat:7.95e-11/lon:7.95e-11/alt:1.76e-01/uncertainty:1.24m
 ```
