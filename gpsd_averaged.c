@@ -480,8 +480,9 @@ static void process_status(const average_state_t *const average_state) {
     const double confidence_radius_m = 2.0 * sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
     const double movement_3d         = sqrt(average_state->pos_change_m * average_state->pos_change_m + average_state->alt_change_m * average_state->alt_change_m);
 
-    printf("STATUS: filter=%s%s, fixes=%lu/%lu, lat=%.8f, lon=%.8f, alt=%.1f, stddev_m=%.2f/%.2f/%.2f, window=%d, outliers=%lu, move_3d=%.2fm (h=%.2fm v=%.2fm), conf=%.1fm%s",
-           filter_name, average_state->anchored ? "/anchored" : "", average_state->count, average_state->received_fixes, lat, lon, alt, lat_error_m, lon_error_m, alt_stddev,
+    printf("STATUS: anchored=%s, filter=%s, fixes=%lu/%lu, lat=%.8f, lon=%.8f, alt=%.1f, stddev_m=%.2f/%.2f/%.2f, window=%d, outliers=%lu, move_3d=%.2fm (h=%.2fm v=%.2fm), "
+           "conf=%.1fm%s",
+           average_state->anchored ? "yes" : "no", filter_name, average_state->count, average_state->received_fixes, lat, lon, alt, lat_error_m, lon_error_m, alt_stddev,
            average_state->window.size, average_state->outliers_rejected, movement_3d, average_state->pos_change_m, average_state->alt_change_m, confidence_radius_m,
            average_state->is_converged ? " [CONVERGED]" : (average_state->pos_change_m < 0.5 ? " [CONVERGING]" : ""));
     if (average_state->filter == AVERAGE_FILTER_KALMAN)
