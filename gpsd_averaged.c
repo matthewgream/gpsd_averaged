@@ -47,6 +47,7 @@ static bool verbose = false;
 #define DEFAULT_GPSD_PORT "2947"
 #endif
 #define DEFAULT_PORT (2947 + 1)
+#define DEFAULT_LISTENANY false
 #define DEFAULT_FILTER AVERAGE_FILTER_SIMPLE
 #define DEFAULT_HDOP_MAX 20.0
 #define DEFAULT_SATELLITES_MIN 4
@@ -365,7 +366,7 @@ static void client_format_json_response(char *const buf, const size_t buflen, co
         client_format_error_response(buf, buflen, "No positions available");
 }
 
-static bool client_start(int *const client_listen_fd, const unsigned short port) {
+static bool client_start(int *const client_listen_fd, const unsigned short port, const bool listenany) {
     if ((*client_listen_fd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
         perror("socket");
         return false;
@@ -377,7 +378,7 @@ static bool client_start(int *const client_listen_fd, const unsigned short port)
     struct sockaddr_in addr;
     memset(&addr, 0, sizeof(addr));
     addr.sin_family      = AF_INET;
-    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+    addr.sin_addr.s_addr = htonl(listenany ? INADDR_ANY : INADDR_LOOPBACK);
     addr.sin_port        = htons(port);
 
     if (bind(*client_listen_fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
@@ -486,7 +487,7 @@ static void process_status(const average_state_t *const average_state) {
     if (average_state->filter == AVERAGE_FILTER_KALMAN)
         printf(", kalman=lat:%.2e/lon:%.2e/alt:%.2e/uncertainty:%.2fm", average_state->kalman_lat.error_covariance, average_state->kalman_lon.error_covariance,
                average_state->kalman_alt.error_covariance, uncertainty_m);
-    printf ("\n");
+    printf("\n");
     fflush(stdout);
 }
 
@@ -528,7 +529,8 @@ static void process_loop(struct gps_data_t *const gps_handle, const int *const c
 
 typedef struct {
     const char *gpsd_host, *gpsd_port;
-    int port;
+    unsigned short port;
+    bool listenany;
     average_filter_t filter;
     int satellites_min;
     double hdop_max;
@@ -539,9 +541,19 @@ typedef struct {
 } config_t;
 
 static const struct option options[] = { // defaults
-    { "gpsd-host", required_argument, 0, 'H' }, { "gpsd-port", required_argument, 0, 'P' }, { "port", required_argument, 0, 'p' }, { "filter", required_argument, 0, 'f' },
-    { "sats", required_argument, 0, 's' },      { "hdop", required_argument, 0, 'h' },      { "anchored", no_argument, 0, 'a' },   { "interval", required_argument, 0, 'i' },
-    { "background", no_argument, 0, 'b' },      { "verbose", no_argument, 0, 'v' },         { "help", no_argument, 0, '?' },       { 0, 0, 0, 0 }
+    { "gpsd-host", required_argument, 0, 'H' },
+    { "gpsd-port", required_argument, 0, 'P' },
+    { "port", required_argument, 0, 'p' },
+    { "listenany", no_argument, 0, 'G' },
+    { "filter", required_argument, 0, 'f' },
+    { "sats", required_argument, 0, 's' },
+    { "hdop", required_argument, 0, 'h' },
+    { "anchored", no_argument, 0, 'a' },
+    { "interval", required_argument, 0, 'i' },
+    { "background", no_argument, 0, 'b' },
+    { "verbose", no_argument, 0, 'v' },
+    { "help", no_argument, 0, '?' },
+    { 0, 0, 0, 0 }
 };
 
 static void usage(const char *const prog) {
@@ -550,6 +562,7 @@ static void usage(const char *const prog) {
     printf("  -H, --gpsd-host HOST     GPSD host (default %s)\n", DEFAULT_GPSD_HOST);
     printf("  -P, --gpsd-port PORT     GPSD port (default %s)\n", DEFAULT_GPSD_PORT);
     printf("  -p, --port PORT          Client listen port (default %d)\n", DEFAULT_PORT);
+    printf("  -G, --listenany          Client listen on INADDR_ANY (default INADDR_LOOPBACK)\n");
     printf("  -f, --filter MODE        Averaging filter: simple, window, kalman (default simple)\n");
     printf("  -s, --sats N             Averaging minimum satellites (default %d)\n", DEFAULT_SATELLITES_MIN);
     printf("  -h, --hdop HDOP          Averaging maximum HDOP (default %.1f)\n", DEFAULT_HDOP_MAX);
@@ -562,7 +575,7 @@ static void usage(const char *const prog) {
 
 static int parse_arguments(const int argc, char *const argv[], config_t *const config) {
     int opt;
-    while ((opt = getopt_long(argc, argv, "H:P:p:f:s:h:ai:bv?", options, NULL)) != -1)
+    while ((opt = getopt_long(argc, argv, "H:P:p:Gf:s:h:ai:bv?", options, NULL)) != -1)
         switch (opt) {
         case 'H':
             config->gpsd_host = optarg;
@@ -571,7 +584,10 @@ static int parse_arguments(const int argc, char *const argv[], config_t *const c
             config->gpsd_port = optarg;
             break;
         case 'p':
-            config->port = atoi(optarg);
+            config->port = (unsigned short)atoi(optarg);
+            break;
+        case 'G':
+            config->listenany = true;
             break;
         case 'f':
             if (strcmp(optarg, "kalman") == 0)
@@ -614,6 +630,7 @@ static config_t config = { // defaults
     .gpsd_host       = DEFAULT_GPSD_HOST,
     .gpsd_port       = DEFAULT_GPSD_PORT,
     .port            = DEFAULT_PORT,
+    .listenany       = DEFAULT_LISTENANY,
     .filter          = DEFAULT_FILTER,
     .satellites_min  = DEFAULT_SATELLITES_MIN,
     .hdop_max        = DEFAULT_HDOP_MAX,
@@ -641,7 +658,7 @@ int main(const int argc, char *const argv[]) {
 
     if (!gps_connect(&gps_handle, config.gpsd_host, config.gpsd_port, config.satellites_min, config.hdop_max))
         exit(EXIT_FAILURE);
-    if (!client_start(&client_listen_fd, (unsigned short)config.port)) {
+    if (!client_start(&client_listen_fd, config.port, config.listenany)) {
         gps_disconnect(&gps_handle);
         exit(EXIT_FAILURE);
     }
