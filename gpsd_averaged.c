@@ -34,6 +34,12 @@
 #define KALMAN_MEASURE_NOISE 25.0 // Measurement noise in meters
 
 typedef enum { AVERAGE_FILTER_SIMPLE, AVERAGE_FILTER_WINDOW, AVERAGE_FILTER_KALMAN } average_filter_t;
+static const char *average_filter_str[3] = { "simple", "window", "kalman" };
+static const char *get_filter_name(const average_filter_t filter) {
+    if (filter < AVERAGE_FILTER_SIMPLE || filter > AVERAGE_FILTER_KALMAN)
+        return "unspecified";
+    return average_filter_str[filter];
+}
 
 #define BUFFER_MAX 1024
 
@@ -151,10 +157,28 @@ typedef struct {
     // Convergence tracking
     double last_lat, last_lon, last_alt;
     double pos_change_m, alt_change_m;
-    double variance_trend;
-    time_t convergence_start;
     bool is_converged;
 } average_state_t;
+
+static const char *get_convergence_str(const average_state_t *state, const double confidence_radius_m) {
+    if (state->is_converged)
+        return "CONVERGED";
+    if (state->count < 30)
+        return "GATHERING";
+    if (confidence_radius_m > 2.0)
+        return "STABILISING";
+    if (state->pos_change_m >= 0.2)
+        return "MOVING";
+    if (state->anchored) {
+        if (state->count < 100)
+            return "SAMPLING"; // Need 100 samples
+        if (confidence_radius_m > 0.5)
+            return "REFINING"; // Need < 0.5m
+        if ((time(NULL) - state->first_fix) < 300)
+            return "AGING"; // Need 5 minutes
+    }
+    return "CONVERGING";
+}
 
 static double calculate_position_change_meters(const double lat1, const double lon1, const double lat2, const double lon2) {
     const double dlat = (lat2 - lat1) * 111320.0, dlon = (lon2 - lon1) * 111320.0 * cos(lat1 * M_PI / 180.0);
@@ -271,15 +295,19 @@ static void average_update(average_state_t *const state, const double lat, const
     state->last_lat = state->latitude;
     state->last_lon = state->longitude;
     state->last_alt = state->altitude;
-    if (state->pos_change_m < 0.5 && !state->is_converged) {
-        if (state->convergence_start == 0)
-            state->convergence_start = time(NULL);
-        else if (time(NULL) - state->convergence_start > 30)
-            state->is_converged = true;
-    } else if (state->pos_change_m >= 0.5) {
-        state->convergence_start = 0;
-        state->is_converged      = false;
-    }
+    if (state->count > 100) {
+        const double lat_error_m = 2.0 * sqrt(state->lat_variance) * 111320.0, lon_error_m = 2.0 * sqrt(state->lon_variance) * 111320.0 * cos(state->latitude * M_PI / 180.0);
+        double confidence_radius_m = sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
+        if (state->filter == AVERAGE_FILTER_KALMAN) {
+            const double kalman_error_m = sqrt(pow(sqrt(state->kalman_lat.error_covariance) * 111320.0, 2) +
+                                               pow(sqrt(state->kalman_lon.error_covariance) * 111320.0 * cos(state->latitude * M_PI / 180.0), 2));
+            confidence_radius_m         = fmin(confidence_radius_m, kalman_error_m);
+        }
+        const bool variance_converged = (confidence_radius_m < (state->anchored ? 0.5 : 1.0)), position_stable = (state->pos_change_m < (state->anchored ? 0.02 : 0.05)),
+                   time_elapsed = (time(NULL) - state->first_fix) > (state->anchored ? 300 : 120);
+        state->is_converged     = variance_converged && position_stable && time_elapsed;
+    } else
+        state->is_converged = false;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -314,7 +342,7 @@ static bool gps_connect(struct gps_data_t *const gps_handle, const char *const g
         return false;
     }
     gps_stream(gps_handle, WATCH_ENABLE | WATCH_JSON, NULL);
-    fcntl((int) gps_handle->gps_fd, F_SETFL, fcntl((int) gps_handle->gps_fd, F_GETFL, 0) | O_NONBLOCK);
+    fcntl((int)gps_handle->gps_fd, F_SETFL, fcntl((int)gps_handle->gps_fd, F_GETFL, 0) | O_NONBLOCK);
     return true;
 }
 
@@ -441,13 +469,13 @@ static void process_signal(const int sig __attribute__((unused))) { process_runn
 
 static void process_status(const average_state_t *const average_state) {
     if (average_state->count == 0) {
-        printf("STATUS: no fixes\n");
+        printf("status: no fixes\n");
+        fflush(stdout);
         return;
     }
 
     double lat, lon, alt;
     double uncertainty_m;
-    const char *filter_name;
     double lat_unc_m, lon_unc_m, alt_unc_m;
 
     switch (average_state->filter) {
@@ -459,7 +487,6 @@ static void process_status(const average_state_t *const average_state) {
         lon_unc_m     = sqrt(average_state->kalman_lon.error_covariance) * 111320.0 * cos(lat * M_PI / 180.0);
         alt_unc_m     = sqrt(average_state->kalman_alt.error_covariance);
         uncertainty_m = sqrt(lat_unc_m * lat_unc_m + lon_unc_m * lon_unc_m + alt_unc_m * alt_unc_m);
-        filter_name   = "kalman";
         break;
     case AVERAGE_FILTER_WINDOW:
     case AVERAGE_FILTER_SIMPLE:
@@ -468,32 +495,26 @@ static void process_status(const average_state_t *const average_state) {
         lon           = average_state->longitude;
         alt           = average_state->altitude;
         uncertainty_m = 0;
-        filter_name   = (average_state->filter == AVERAGE_FILTER_WINDOW) ? "window" : "simple";
         break;
     }
 
-    const double lat_stddev          = sqrt(average_state->lat_variance);
-    const double lon_stddev          = sqrt(average_state->lon_variance);
-    const double alt_stddev          = sqrt(average_state->alt_variance);
-    const double lat_error_m         = lat_stddev * 111320.0;
-    const double lon_error_m         = lon_stddev * 111320.0 * cos(lat * M_PI / 180.0);
+    const double lat_stddev = sqrt(average_state->lat_variance), lon_stddev = sqrt(average_state->lon_variance), alt_stddev = sqrt(average_state->alt_variance);
+    const double lat_error_m = lat_stddev * 111320.0, lon_error_m = lon_stddev * 111320.0 * cos(lat * M_PI / 180.0);
     const double confidence_radius_m = 2.0 * sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
     const double movement_3d         = sqrt(average_state->pos_change_m * average_state->pos_change_m + average_state->alt_change_m * average_state->alt_change_m);
 
-    printf("STATUS: anchored=%s, filter=%s, fixes=%lu/%lu, lat=%.8f, lon=%.8f, alt=%.1f, stddev_m=%.2f/%.2f/%.2f, window=%d, outliers=%lu, move_3d=%.2fm (h=%.2fm v=%.2fm), "
-           "conf=%.1fm%s",
-           average_state->anchored ? "yes" : "no", filter_name, average_state->count, average_state->received_fixes, lat, lon, alt, lat_error_m, lon_error_m, alt_stddev,
-           average_state->window.size, average_state->outliers_rejected, movement_3d, average_state->pos_change_m, average_state->alt_change_m, confidence_radius_m,
-           average_state->is_converged ? " [CONVERGED]" : (average_state->pos_change_m < 0.5 ? " [CONVERGING]" : ""));
+    printf("status: fixes=%lu/%lu, lat=%.8f, lon=%.8f, alt=%.1f, stddev_m=%.2f/%.2f/%.2f, window=%d, outliers=%lu, moved=%.2fm/h:%.2f/v:%.2f, conf=%.1fm [%s]",
+           average_state->count, average_state->received_fixes, lat, lon, alt, lat_error_m, lon_error_m, alt_stddev, average_state->window.size, average_state->outliers_rejected,
+           movement_3d, average_state->pos_change_m, average_state->alt_change_m, confidence_radius_m, get_convergence_str(average_state, confidence_radius_m));
     if (average_state->filter == AVERAGE_FILTER_KALMAN)
-        printf(", kalman=lat:%.2e/lon:%.2e/alt:%.2e/uncertainty:%.2fm", average_state->kalman_lat.error_covariance, average_state->kalman_lon.error_covariance,
+        printf(", kalman=lat:%.2e/lon:%.2e/alt:%.2e/unc:%.2fm", average_state->kalman_lat.error_covariance, average_state->kalman_lon.error_covariance,
                average_state->kalman_alt.error_covariance, uncertainty_m);
     printf("\n");
     fflush(stdout);
 }
 
 static void process_loop(struct gps_data_t *const gps_handle, const int *const client_listen_fd, average_state_t *const average_state, const time_t interval_status) {
-    time_t last_status = 0;
+    time_t last_status = time(NULL);
 
     signal(SIGINT, process_signal);
     signal(SIGTERM, process_signal);
@@ -504,7 +525,7 @@ static void process_loop(struct gps_data_t *const gps_handle, const int *const c
         FD_ZERO(&rfds);
         FD_SET(gps_handle->gps_fd, &rfds);
         FD_SET(*client_listen_fd, &rfds);
-        const int maxfd   = (gps_handle->gps_fd > *client_listen_fd) ? (int) gps_handle->gps_fd : *client_listen_fd;
+        const int maxfd   = (gps_handle->gps_fd > *client_listen_fd) ? (int)gps_handle->gps_fd : *client_listen_fd;
         struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
         if (select(maxfd + 1, &rfds, NULL, NULL, &tv) < 0) {
             if (errno != EINTR) {
@@ -657,6 +678,9 @@ int main(const int argc, char *const argv[]) {
         exit(EXIT_FAILURE);
     }
 
+    fprintf(stderr, "config: gpsd=%s:%s, port=%d, filter=%s, anchored=%s, sats/hdop=%d/%.1f, listen-any=%s, status=%ds\n", config.gpsd_host, config.gpsd_port, config.port,
+            get_filter_name(config.filter), config.anchored ? "yes" : "no", config.satellites_min, config.hdop_max, config.listenany ? "yes" : "no", config.interval_status);
+
     if (!gps_connect(&gps_handle, config.gpsd_host, config.gpsd_port, config.satellites_min, config.hdop_max))
         exit(EXIT_FAILURE);
     if (!client_start(&client_listen_fd, config.port, config.listenany)) {
@@ -664,11 +688,7 @@ int main(const int argc, char *const argv[]) {
         exit(EXIT_FAILURE);
     }
     average_begin(&average_state, config.filter, config.anchored);
-    if (config.verbose)
-        printf("gpsd_averaged started on port %d, connected to gpsd at %s:%s\n", config.port, config.gpsd_host, config.gpsd_port);
-
     process_loop(&gps_handle, &client_listen_fd, &average_state, config.interval_status);
-
     client_stop(&client_listen_fd);
     gps_disconnect(&gps_handle);
 
