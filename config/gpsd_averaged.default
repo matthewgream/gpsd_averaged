@@ -1,0 +1,3 @@
+
+GPSD_AVERAGED_OPTIONS="--filter kalman --interval 300 --anchored --listenany"
+

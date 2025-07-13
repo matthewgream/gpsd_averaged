@@ -314,7 +314,7 @@ static bool gps_connect(struct gps_data_t *const gps_handle, const char *const g
         return false;
     }
     gps_stream(gps_handle, WATCH_ENABLE | WATCH_JSON, NULL);
-    fcntl(gps_handle->gps_fd, F_SETFL, fcntl(gps_handle->gps_fd, F_GETFL, 0) | O_NONBLOCK);
+    fcntl((int) gps_handle->gps_fd, F_SETFL, fcntl((int) gps_handle->gps_fd, F_GETFL, 0) | O_NONBLOCK);
     return true;
 }
 
@@ -504,7 +504,7 @@ static void process_loop(struct gps_data_t *const gps_handle, const int *const c
         FD_ZERO(&rfds);
         FD_SET(gps_handle->gps_fd, &rfds);
         FD_SET(*client_listen_fd, &rfds);
-        const int maxfd   = (gps_handle->gps_fd > *client_listen_fd) ? gps_handle->gps_fd : *client_listen_fd;
+        const int maxfd   = (gps_handle->gps_fd > *client_listen_fd) ? (int) gps_handle->gps_fd : *client_listen_fd;
         struct timeval tv = { .tv_sec = 0, .tv_usec = 100000 };
         if (select(maxfd + 1, &rfds, NULL, NULL, &tv) < 0) {
             if (errno != EINTR) {

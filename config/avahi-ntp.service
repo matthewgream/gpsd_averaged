@@ -1,0 +1,11 @@
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+<service-group>
+  <name>gps time service on adsb-ostratakenebranna.local</name>
+  <service>
+    <type>_ntp._udp</type>
+    <port>123</port>
+    <txt-record>stratum=2</txt-record>
+    <txt-record>gps=true</txt-record>
+  </service>
+</service-group>
