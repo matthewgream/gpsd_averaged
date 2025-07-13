@@ -29,16 +29,13 @@
 // ------------------------------------------------------------------------------------------------------------------------
 
 #define WINDOW_SIZE 300           // Keep last 5 minutes at 1Hz
-#define OUTLIER_THRESHOLD 3.0     // Reject if > 3 standard deviations
 #define KALMAN_PROCESS_NOISE 0.1  // Process noise for Kalman filter
 #define KALMAN_MEASURE_NOISE 25.0 // Measurement noise in meters
 
 typedef enum { AVERAGE_FILTER_SIMPLE, AVERAGE_FILTER_WINDOW, AVERAGE_FILTER_KALMAN } average_filter_t;
 static const char *average_filter_str[3] = { "simple", "window", "kalman" };
 static const char *get_filter_name(const average_filter_t filter) {
-    if (filter < AVERAGE_FILTER_SIMPLE || filter > AVERAGE_FILTER_KALMAN)
-        return "unspecified";
-    return average_filter_str[filter];
+    return (filter >= AVERAGE_FILTER_SIMPLE && filter <= AVERAGE_FILTER_KALMAN) ? average_filter_str[filter] : "unspecified";
 }
 
 #define BUFFER_MAX 1024
@@ -93,26 +90,55 @@ static void window_add(sliding_window_t *const w, const double lat, const double
     w->size                       = w->size + (w->size < WINDOW_SIZE ? 1 : 0);
 }
 
-static void window_get_stats(const sliding_window_t *const w, double *const mean_lat, double *const mean_lon, double *const mean_alt, double *const stddev_lat,
-                             double *const stddev_lon, double *const stddev_alt) {
-    if (w->size == 0)
+static void window_calculate_mean(const sliding_window_t *const w, double *avg_lat, double *avg_lon, double *avg_alt) {
+    if (w->size == 0) {
+        *avg_lat = *avg_lon = *avg_alt = 0;
         return;
+    }
     double sum_lat = 0, sum_lon = 0, sum_alt = 0;
+    for (int i = 0; i < w->size; i++) {
+        const int idx = (((w->size < WINDOW_SIZE) ? 0 : w->head) + i) % WINDOW_SIZE;
+        sum_lat += w->samples[idx].lat;
+        sum_lon += w->samples[idx].lon;
+        sum_alt += w->samples[idx].alt;
+    }
+    *avg_lat = sum_lat / w->size;
+    *avg_lon = sum_lon / w->size;
+    *avg_alt = sum_alt / w->size;
+}
+
+static void window_calculate_variance(const sliding_window_t *const w, double avg_lat, double avg_lon, double avg_alt, double *var_lat, double *var_lon, double *var_alt) {
+    if (w->size == 0) {
+        *var_lat = *var_lon = *var_alt = 0;
+        return;
+    }
     double sum_sq_lat = 0, sum_sq_lon = 0, sum_sq_alt = 0;
     for (int i = 0; i < w->size; i++) {
-        sum_lat += w->samples[i].lat;
-        sum_lon += w->samples[i].lon;
-        sum_alt += w->samples[i].alt;
-        sum_sq_lat += w->samples[i].lat * w->samples[i].lat;
-        sum_sq_lon += w->samples[i].lon * w->samples[i].lon;
-        sum_sq_alt += w->samples[i].alt * w->samples[i].alt;
+        const int idx     = (((w->size < WINDOW_SIZE) ? 0 : w->head) + i) % WINDOW_SIZE;
+        const double dlat = w->samples[idx].lat - avg_lat, dlon = w->samples[idx].lon - avg_lon, dalt = w->samples[idx].alt - avg_alt;
+        sum_sq_lat += dlat * dlat;
+        sum_sq_lon += dlon * dlon;
+        sum_sq_alt += dalt * dalt;
     }
-    *mean_lat   = sum_lat / w->size;
-    *mean_lon   = sum_lon / w->size;
-    *mean_alt   = sum_alt / w->size;
-    *stddev_lat = sqrt((sum_sq_lat / w->size) - (*mean_lat * *mean_lat));
-    *stddev_lon = sqrt((sum_sq_lon / w->size) - (*mean_lon * *mean_lon));
-    *stddev_alt = sqrt((sum_sq_alt / w->size) - (*mean_alt * *mean_alt));
+    *var_lat = sum_sq_lat / w->size;
+    if (*var_lat < 0)
+        *var_lat = 0;
+    *var_lon = sum_sq_lon / w->size;
+    if (*var_lon < 0)
+        *var_lon = 0;
+    *var_alt = sum_sq_alt / w->size;
+    if (*var_alt < 0)
+        *var_alt = 0;
+}
+
+static void window_get_stats(const sliding_window_t *const w, double *const avg_lat, double *const avg_lon, double *const avg_alt, double *const stddev_lat,
+                             double *const stddev_lon, double *const stddev_alt) {
+    double var_lat, var_lon, var_alt;
+    window_calculate_mean(w, avg_lat, avg_lon, avg_alt);
+    window_calculate_variance(w, *avg_lat, *avg_lon, *avg_alt, &var_lat, &var_lon, &var_alt);
+    *stddev_lat = sqrt(var_lat);
+    *stddev_lon = sqrt(var_lon);
+    *stddev_alt = sqrt(var_alt);
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
@@ -147,7 +173,7 @@ typedef struct {
     unsigned long count;
     time_t first_fix, last_fix;
     double latitude, longitude, altitude;
-    double lat_variance, lon_variance, alt_variance;
+    double latitude_var, longitude_var, altitude_var;
     unsigned long received_fixes, rejected_fixes;
     unsigned long outliers_rejected;
     average_filter_t filter;
@@ -197,16 +223,19 @@ static void average_begin(average_state_t *const state, const average_filter_t f
 static void average_update(average_state_t *const state, const double lat, const double lon, const double alt) {
 
     if (state->window.size >= 10) {
-        double mean_lat, mean_lon, mean_alt, stddev_lat, stddev_lon, stddev_alt;
-        window_get_stats(&state->window, &mean_lat, &mean_lon, &mean_alt, &stddev_lat, &stddev_lon, &stddev_alt);
-        const double lat_diff = fabs(lat - mean_lat), lon_diff = fabs(lon - mean_lon), alt_diff = fabs(alt - mean_alt);
+        double avg_lat, avg_lon, avg_alt, stddev_lat, stddev_lon, stddev_alt;
+        window_get_stats(&state->window, &avg_lat, &avg_lon, &avg_alt, &stddev_lat, &stddev_lon, &stddev_alt);
+        const double lat_diff = fabs(lat - avg_lat), lon_diff = fabs(lon - avg_lon), alt_diff = fabs(alt - avg_alt);
         if (state->anchored && state->count > 100) { // After 100 samples
-            const double distance_m = calculate_position_change_meters(mean_lat, mean_lon, lat, lon);
-            // Anchored can't move more than 2 meters!
-            if (distance_m > 2.0 || alt_diff > 3.0) {
+            const double distance_m  = calculate_position_change_meters(avg_lat, avg_lon, lat, lon);
+            const double lat_error_m = sqrt(state->latitude_var) * 111320.0, lon_error_m = sqrt(state->longitude_var) * 111320.0 * cos(avg_lat * M_PI / 180.0);
+            const double current_confidence_m = sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
+            const double distance_threshold = fmax(10.0, current_confidence_m * 3.0), alt_threshold = fmax(10.0, sqrt(state->altitude_var) * 4.0);
+            if (distance_m > distance_threshold || alt_diff > alt_threshold) {
                 state->outliers_rejected++;
                 if (verbose)
-                    printf("Anchored mode outlier: %.8f,%.8f,%.1f (%.1fm away)\n", lat, lon, alt, distance_m);
+                    printf("Reject anchored: distance=%.2fm (threshold=%.2fm), alt_diff=%.2fm (threshold=%.2fm), conf=%.2fm\n", distance_m, distance_threshold, alt_diff,
+                           alt_threshold, current_confidence_m);
                 return;
             }
         } else {
@@ -217,10 +246,11 @@ static void average_update(average_state_t *const state, const double lat, const
                 stddev_lon = MIN_STDDEV_POS;
             if (stddev_alt < MIN_STDDEV_ALT)
                 stddev_alt = MIN_STDDEV_ALT;
-            if (lat_diff > OUTLIER_THRESHOLD * stddev_lat || lon_diff > OUTLIER_THRESHOLD * stddev_lon || alt_diff > OUTLIER_THRESHOLD * stddev_alt) {
+            if (lat_diff > (state->anchored ? 5.0 : 3.0) * stddev_lat || lon_diff > (state->anchored ? 5.0 : 3.0) * stddev_lon ||
+                alt_diff > (state->anchored ? 5.0 : 3.0) * stddev_alt) {
                 state->outliers_rejected++;
                 if (verbose)
-                    printf("Outlier rejected: %.8f,%.8f,%.1f (%.1f/%.1f/%.1f stddevs)\n", lat, lon, alt, lat_diff / stddev_lat, lon_diff / stddev_lon, alt_diff / stddev_alt);
+                    printf("Reject outlier: %.8f,%.8f,%.1f (%.1f/%.1f/%.1f stddevs)\n", lat, lon, alt, lat_diff / stddev_lat, lon_diff / stddev_lon, alt_diff / stddev_alt);
                 return;
             }
         }
@@ -232,21 +262,12 @@ static void average_update(average_state_t *const state, const double lat, const
         kalman_init(&state->kalman_lat, lat, 0.0001);
         kalman_init(&state->kalman_lon, lon, 0.0001);
         kalman_init(&state->kalman_alt, alt, 10.0);
-        if (state->anchored) {
-            state->kalman_lat.measure_noise = 0.00008 * 0.00008;
-            state->kalman_lon.measure_noise = 0.00008 * 0.00008;
-            state->kalman_alt.measure_noise = 100.0;
-            state->kalman_lat.process_noise = 1e-12; // Essentially zero
-            state->kalman_lon.process_noise = 1e-12;
-            state->kalman_alt.process_noise = 0.0001; // Tiny bit for pressure changes
-        } else {
-            state->kalman_lat.measure_noise = 0.00008 * 0.00008;
-            state->kalman_lon.measure_noise = 0.00008 * 0.00008;
-            state->kalman_alt.measure_noise = 100.0;
-            state->kalman_lat.process_noise = 0.000000001;
-            state->kalman_lon.process_noise = 0.000000001;
-            state->kalman_alt.process_noise = 0.01;
-        }
+        state->kalman_lat.measure_noise = 0.00008 * 0.00008;
+        state->kalman_lon.measure_noise = 0.00008 * 0.00008;
+        state->kalman_alt.measure_noise = 100.0;
+        state->kalman_lat.process_noise = state->anchored ? 1e-12 : 0.000000001;
+        state->kalman_lon.process_noise = state->anchored ? 1e-12 : 0.000000001;
+        state->kalman_alt.process_noise = state->anchored ? 0.0001 : 0.01;
     } else {
         kalman_update(&state->kalman_lat, lat);
         kalman_update(&state->kalman_lon, lon);
@@ -255,34 +276,8 @@ static void average_update(average_state_t *const state, const double lat, const
 
     state->count++;
 
-    const int samples = (state->window.size < WINDOW_SIZE) ? state->window.size : WINDOW_SIZE;
-    double sum_lat = 0, sum_lon = 0, sum_alt = 0;
-    for (int i = 0; i < samples; i++) {
-        sum_lat += state->window.samples[i].lat;
-        sum_lon += state->window.samples[i].lon;
-        sum_alt += state->window.samples[i].alt;
-    }
-    state->latitude  = sum_lat / samples;
-    state->longitude = sum_lon / samples;
-    state->altitude  = sum_alt / samples;
-
-    double var_lat = 0, var_lon = 0, var_alt = 0;
-    for (int i = 0; i < samples; i++) {
-        var_lat += (state->window.samples[i].lat - state->latitude) * (state->window.samples[i].lat - state->latitude);
-        var_lon += (state->window.samples[i].lon - state->longitude) * (state->window.samples[i].lon - state->longitude);
-        var_alt += (state->window.samples[i].alt - state->altitude) * (state->window.samples[i].alt - state->altitude);
-    }
-
-    state->lat_variance = var_lat / samples;
-    state->lon_variance = var_lon / samples;
-    state->alt_variance = var_alt / samples;
-
-    if (state->lat_variance < 0)
-        state->lat_variance = 0;
-    if (state->lon_variance < 0)
-        state->lon_variance = 0;
-    if (state->alt_variance < 0)
-        state->alt_variance = 0;
+    window_calculate_mean(&state->window, &state->latitude, &state->longitude, &state->altitude);
+    window_calculate_variance(&state->window, state->latitude, state->longitude, state->altitude, &state->latitude_var, &state->longitude_var, &state->altitude_var);
 
     state->last_fix = time(NULL);
     if (state->first_fix == 0)
@@ -295,8 +290,9 @@ static void average_update(average_state_t *const state, const double lat, const
     state->last_lat = state->latitude;
     state->last_lon = state->longitude;
     state->last_alt = state->altitude;
+
     if (state->count > 100) {
-        const double lat_error_m = 2.0 * sqrt(state->lat_variance) * 111320.0, lon_error_m = 2.0 * sqrt(state->lon_variance) * 111320.0 * cos(state->latitude * M_PI / 180.0);
+        const double lat_error_m = 2.0 * sqrt(state->latitude_var) * 111320.0, lon_error_m = 2.0 * sqrt(state->longitude_var) * 111320.0 * cos(state->latitude * M_PI / 180.0);
         double confidence_radius_m = sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
         if (state->filter == AVERAGE_FILTER_KALMAN) {
             const double kalman_error_m = sqrt(pow(sqrt(state->kalman_lat.error_covariance) * 111320.0, 2) +
@@ -373,7 +369,7 @@ static void client_format_stats_response(char *const buf, const size_t buflen, c
                  "\"samples\":%lu,\"rejected\":%lu,"
                  "\"first_fix\":%ld,\"last_fix\":%ld,"
                  "\"lat_stddev\":%.6f,\"lon_stddev\":%.6f,\"alt_stddev\":%.2f}\r\n",
-                 state->count, state->rejected_fixes, state->first_fix, state->last_fix, sqrt(state->lat_variance), sqrt(state->lon_variance), sqrt(state->alt_variance));
+                 state->count, state->rejected_fixes, state->first_fix, state->last_fix, sqrt(state->latitude_var), sqrt(state->longitude_var), sqrt(state->altitude_var));
     else
         client_format_error_response(buf, buflen, "No statistics available");
 }
@@ -388,8 +384,8 @@ static void client_format_json_response(char *const buf, const size_t buflen, co
                  "\"lat\":%.8f,\"lon\":%.8f,\"alt\":%.2f,"
                  "\"samples\":%lu,\"window\":%d,\"outliers\":%lu,"
                  "\"lat_err\":%.2f,\"lon_err\":%.2f,\"alt_err\":%.2f,\"age\":%ld}\r\n",
-                 lat, lon, alt, state->count, state->window.size, state->outliers_rejected, sqrt(state->lat_variance) * 111320.0,
-                 sqrt(state->lon_variance) * 111320.0 * cos(lat * M_PI / 180.0), sqrt(state->alt_variance), time(NULL) - state->last_fix);
+                 lat, lon, alt, state->count, state->window.size, state->outliers_rejected, sqrt(state->latitude_var) * 111320.0,
+                 sqrt(state->longitude_var) * 111320.0 * cos(lat * M_PI / 180.0), sqrt(state->altitude_var), time(NULL) - state->last_fix);
     } else
         client_format_error_response(buf, buflen, "No positions available");
 }
@@ -498,7 +494,7 @@ static void process_status(const average_state_t *const average_state) {
         break;
     }
 
-    const double lat_stddev = sqrt(average_state->lat_variance), lon_stddev = sqrt(average_state->lon_variance), alt_stddev = sqrt(average_state->alt_variance);
+    const double lat_stddev = sqrt(average_state->latitude_var), lon_stddev = sqrt(average_state->longitude_var), alt_stddev = sqrt(average_state->altitude_var);
     const double lat_error_m = lat_stddev * 111320.0, lon_error_m = lon_stddev * 111320.0 * cos(lat * M_PI / 180.0);
     const double confidence_radius_m = 2.0 * sqrt(lat_error_m * lat_error_m + lon_error_m * lon_error_m);
     const double movement_3d         = sqrt(average_state->pos_change_m * average_state->pos_change_m + average_state->alt_change_m * average_state->alt_change_m);
