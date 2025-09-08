@@ -348,7 +348,11 @@ static void gps_disconnect(struct gps_data_t *const gps_handle) {
 }
 
 static void gps_process(struct gps_data_t *const gps_handle, average_state_t *const state) {
+#if GPSD_API_MAJOR_VERSION < 7
+    if (gps_read(gps_handle) > 0)
+#else
     if (gps_read(gps_handle, NULL, 0) > 0)
+#endif
         if (gps_handle->set & MODE_SET && gps_handle->fix.mode >= MODE_2D)
             gps_process_fix(gps_handle, state);
 }
