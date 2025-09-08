@@ -14,7 +14,7 @@ CFLAGS_STRICT=-Werror -Wcast-align -Wcast-qual \
     -Wswitch-enum -Wundef \
     -Wunreachable-code -Wunused \
     -Wwrite-strings
-CFLAGS=$(CFLAGS_COMMON) $(CFLAGS_STRICT) -O3 -march=native -fstack-protector-strong
+CFLAGS=$(CFLAGS_COMMON) $(CFLAGS_STRICT) -O3 -fstack-protector-strong
 LDFLAGS=-lgps -lm
 
 TARGET=gpsd_averaged
