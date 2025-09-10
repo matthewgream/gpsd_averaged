@@ -1,7 +1,7 @@
 <?xml version="1.0" standalone='no'?>
 <!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
-  <name>gps position service on adsb-ostratakenebranna.local</name>
+  <name>gps position service</name>
   <service>
     <type>_gps._tcp</type>
     <port>2948</port>
