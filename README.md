@@ -1,4 +1,7 @@
-Simple mechanism to average gnss positions from gpsd and re-present them on a tcp port in json. For an anchored position, on a consumer grade ublox gnss device, this can quickly stablise to a horizontal uncertainty of ~1.25m and near zero vertically. Included are config defaults and systemd service files (plus those also for gpsd).
+
+Simple mechanism to average gnss positions from gpsd and re-present them on a tcp port in json.
+For an anchored position, on a consumer grade ublox gnss device, this can quickly stablise to a horizontal uncertainty of ~<1m and near zero vertically.
+Included are config defaults and systemd service files (plus those also for gpsd).
 
 ```
 root@adsb:/opt/gpsd_averaged# ./gpsd_averaged --help
