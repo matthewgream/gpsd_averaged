@@ -13,7 +13,7 @@ HOSTNAME=$(echo "$SERVICE_INFO" | cut -d';' -f7)
 IP=$(echo "$SERVICE_INFO" | cut -d';' -f8)
 PORT=$(echo "$SERVICE_INFO" | cut -d';' -f9)
 
-echo "gps-service: $HOSTNAME ($IP:$PORT)"
+echo "service:      $HOSTNAME ($IP:$PORT)"
 
 POSITION=$(echo '?POLL;' | nc -w 2 "$IP" "$PORT" 2>/dev/null)
 
