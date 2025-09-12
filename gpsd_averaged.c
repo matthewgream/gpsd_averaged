@@ -56,6 +56,8 @@ static bool verbose = false;
 #define DEFAULT_SATELLITES_MIN 4
 #define DEFAULT_ANCHORED false
 #define DEFAULT_INTERVAL_STATUS (30 * 60)
+#define DEFAULT_VERBOSE false
+#define DEFAULT_DAEMON false
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
@@ -648,7 +650,7 @@ static int parse_arguments(const int argc, char *const argv[], config_t *const c
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
-static config_t config = { // defaults
+static config_t config = {
     .gpsd_host       = DEFAULT_GPSD_HOST,
     .gpsd_port       = DEFAULT_GPSD_PORT,
     .port            = DEFAULT_PORT,
@@ -658,41 +660,41 @@ static config_t config = { // defaults
     .hdop_max        = DEFAULT_HDOP_MAX,
     .anchored        = DEFAULT_ANCHORED,
     .interval_status = DEFAULT_INTERVAL_STATUS,
-    .verbose         = false,
-    .daemon          = false
+    .verbose         = DEFAULT_VERBOSE,
+    .daemon          = DEFAULT_DAEMON,
 };
-
-static struct gps_data_t gps_handle;
-static average_state_t average_state;
-static int client_listen_fd;
 
 int main(const int argc, char *const argv[]) {
 
+    struct gps_data_t gps_handle;
+    average_state_t average_state;
+    int client_listen_fd;
+
     if (parse_arguments(argc, argv, &config) < 0)
-        exit(EXIT_SUCCESS);
+        return EXIT_SUCCESS;
 
     verbose = config.verbose;
 
     if (config.daemon && daemon(0, 0) < 0) {
         perror("daemon");
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
 
     fprintf(stderr, "config: gpsd=%s:%s, port=%d, filter=%s, anchored=%s, sats/hdop=%d/%.1f, listen-any=%s, status=%ds\n", config.gpsd_host, config.gpsd_port, config.port,
             get_filter_name(config.filter), config.anchored ? "yes" : "no", config.satellites_min, config.hdop_max, config.listenany ? "yes" : "no", config.interval_status);
 
     if (!gps_connect(&gps_handle, config.gpsd_host, config.gpsd_port, config.satellites_min, config.hdop_max))
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     if (!client_start(&client_listen_fd, config.port, config.listenany)) {
         gps_disconnect(&gps_handle);
-        exit(EXIT_FAILURE);
+        return EXIT_FAILURE;
     }
     average_begin(&average_state, config.filter, config.anchored);
     process_loop(&gps_handle, &client_listen_fd, &average_state, config.interval_status);
     client_stop(&client_listen_fd);
     gps_disconnect(&gps_handle);
 
-    return 0;
+    return EXIT_SUCCESS;
 }
 
 // ------------------------------------------------------------------------------------------------------------------------
