@@ -18,10 +18,11 @@ echo "service:      $HOSTNAME ($IP:$PORT)"
 POSITION=$(echo '?POLL;' | nc -w 2 "$IP" "$PORT" 2>/dev/null)
 
 if [ -n "$POSITION" ]; then
-    # echo "Raw response: $POSITION"
-    # Parse JSON with jq if available
     if command -v jq &> /dev/null; then
+      # echo "response:     $POSITION"
         echo "$POSITION" | jq -r '"latitude:     \(.lat)°\nlongitude:    \(.lon)°\naltitude:     \(.alt)m\nsamples:      \(.samples)\nuncertainty:  \(.lat_err)m N/S, \(.lon_err)m E/W"'
+    else
+        echo "response:     $POSITION"
     fi
 else
     echo "Failed to get position"
