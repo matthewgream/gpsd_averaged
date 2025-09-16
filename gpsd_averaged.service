@@ -1,7 +1,8 @@
 [Unit]
 Description=GPS Position Averaging Daemon
 After=gpsd.service
-Requires=gpsd.service
+BindsTo=gpsd.service
+PartOf=gpsd.service
 
 [Service]
 Type=simple
@@ -11,4 +12,4 @@ Restart=on-failure
 RestartSec=10
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=gpsd.service
