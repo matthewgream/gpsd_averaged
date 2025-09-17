@@ -160,10 +160,10 @@ static void kalman_init(kalman_state_t *const k, const double initial_estimate, 
 }
 
 static double kalman_update(kalman_state_t *const k, const double measurement) {
-    k->error_covariance += k->process_noise;
-    const double kalman_gain = k->error_covariance / (k->error_covariance + k->measure_noise);
+    const double predicted_error = k->error_covariance + k->process_noise;                 // predict
+    const double kalman_gain     = predicted_error / (predicted_error + k->measure_noise); // update
     k->estimate += kalman_gain * (measurement - k->estimate);
-    k->error_covariance = (1.0 - kalman_gain) * k->error_covariance; // This line was wrong
+    k->error_covariance = (1.0 - kalman_gain) * predicted_error;
     return k->estimate;
 }
 
