@@ -318,13 +318,27 @@ static bool gps_process_fix_is_quality_acceptable(const struct gps_data_t *const
     return (gps_handle->satellites_used >= gps_satellites_min && gps_handle->dop.hdop <= gps_hdop_max);
 }
 
+// gpsd 3.20 (API v9) deprecated fix.altitude and split it into altMSL (above mean sea level, geoid) and
+// altHAE (above ellipsoid). Newer gpsd (required for the u-blox Gen9) leaves the legacy fix.altitude as
+// NaN, which then poisons the averaged altitude and is emitted as the invalid JSON token "nan".
+static double gps_fix_altitude(const struct gps_data_t *const gps_handle) {
+#if GPSD_API_MAJOR_VERSION >= 9
+    if (!isnan(gps_handle->fix.altMSL))
+        return gps_handle->fix.altMSL;
+    return gps_handle->fix.altHAE; // fall back to ellipsoid height if no geoid separation
+#else
+    return gps_handle->fix.altitude;
+#endif
+}
+
 static void gps_process_fix(const struct gps_data_t *const gps_handle, average_state_t *const state) {
     state->received_fixes++;
     if (gps_process_fix_is_quality_acceptable(gps_handle)) {
-        average_update(state, gps_handle->fix.latitude, gps_handle->fix.longitude, gps_handle->fix.altitude);
+        const double altitude = gps_fix_altitude(gps_handle);
+        average_update(state, gps_handle->fix.latitude, gps_handle->fix.longitude, altitude);
         if (verbose)
-            printf("Fix %lu: %.8f,%.8f,%.1f sats=%d hdop=%.1f\n", state->count, gps_handle->fix.latitude, gps_handle->fix.longitude, gps_handle->fix.altitude,
-                   gps_handle->satellites_used, gps_handle->dop.hdop);
+            printf("Fix %lu: %.8f,%.8f,%.1f sats=%d hdop=%.1f\n", state->count, gps_handle->fix.latitude, gps_handle->fix.longitude, altitude, gps_handle->satellites_used,
+                   gps_handle->dop.hdop);
     } else {
         state->rejected_fixes++;
         if (verbose)
