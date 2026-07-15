@@ -333,16 +333,18 @@ static double gps_fix_altitude(const struct gps_data_t *const gps_handle) {
 
 static void gps_process_fix(const struct gps_data_t *const gps_handle, average_state_t *const state) {
     state->received_fixes++;
-    if (gps_process_fix_is_quality_acceptable(gps_handle)) {
-        const double altitude = gps_fix_altitude(gps_handle);
-        average_update(state, gps_handle->fix.latitude, gps_handle->fix.longitude, altitude);
+    const double latitude = gps_handle->fix.latitude, longitude = gps_handle->fix.longitude, altitude = gps_fix_altitude(gps_handle);
+    // A single non-finite altitude (e.g. a brief 2D fix right after startup, where altMSL/altHAE are
+    // NaN) would permanently poison the Kalman altitude estimate, so require all three components to be
+    // finite before averaging - otherwise treat the fix as rejected.
+    if (gps_process_fix_is_quality_acceptable(gps_handle) && isfinite(latitude) && isfinite(longitude) && isfinite(altitude)) {
+        average_update(state, latitude, longitude, altitude);
         if (verbose)
-            printf("Fix %lu: %.8f,%.8f,%.1f sats=%d hdop=%.1f\n", state->count, gps_handle->fix.latitude, gps_handle->fix.longitude, altitude, gps_handle->satellites_used,
-                   gps_handle->dop.hdop);
+            printf("Fix %lu: %.8f,%.8f,%.1f sats=%d hdop=%.1f\n", state->count, latitude, longitude, altitude, gps_handle->satellites_used, gps_handle->dop.hdop);
     } else {
         state->rejected_fixes++;
         if (verbose)
-            printf("Fix rejected: sats=%d hdop=%.1f\n", gps_handle->satellites_used, gps_handle->dop.hdop);
+            printf("Fix rejected: sats=%d hdop=%.1f alt=%.1f\n", gps_handle->satellites_used, gps_handle->dop.hdop, altitude);
     }
 }
 
