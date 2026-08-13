@@ -19,61 +19,88 @@ LDFLAGS=-lgps -lm
 
 TARGET=gpsd_averaged
 SOURCES=gpsd_averaged.c
+HOSTNAME:=$(shell hostname)
+CFG_SRC:=$(if $(wildcard $(TARGET).$(HOSTNAME).cfg),$(TARGET).$(HOSTNAME).cfg,$(TARGET).cfg)
 
 ##
+
+all: $(TARGET)
 
 $(TARGET): $(SOURCES)
 	$(CC) $(CFLAGS) -o $@ $< $(LDFLAGS)
 
 clean:
-	rm -f $(TARGET)
+	rm -f $(TARGET) $(TARGET).armhf
 
 format:
-	clang-format -i $(SOURCES)
+	clang-format-19 -i $(SOURCES)
 
-.PHONY: clean format
+DEV_PACKAGES=libgps-dev
+DEV_PACKAGES_ARMHF=$(addsuffix :armhf,$(DEV_PACKAGES))
+install-dev:
+	apt install -y $(DEV_PACKAGES)
+remove-dev:
+	apt purge -y $(DEV_PACKAGES)
+install-dev-armhf:
+	dpkg --add-architecture armhf
+	apt update
+	apt install -y gcc-arm-linux-gnueabihf $(DEV_PACKAGES_ARMHF)
+remove-dev-armhf:
+	apt purge -y gcc-arm-linux-gnueabihf $(DEV_PACKAGES_ARMHF)
+	dpkg --remove-architecture armhf
+	apt update
+
+CROSS_CC_ARMHF=arm-linux-gnueabihf-gcc
+$(TARGET).armhf: $(SOURCES)
+	$(CROSS_CC_ARMHF) $(CFLAGS) -o $(TARGET).armhf $< $(LDFLAGS)
+armhf: $(TARGET).armhf
+
+.PHONY: all clean format install-dev remove-dev install-dev-armhf remove-dev-armhf armhf
 
 ##
 
-INSTALL_DIR = /usr/local/bin
-DEFAULT_DIR = /etc/default
-SYSTEMD_SERVICE_DIR = /etc/systemd/system
-AVAHID_SERVICE_DIR = /etc/avahi/services
-UDEV_RULES_DIR = /etc/udev/rules.d
+INSTALL=gpsd_averaged
+DIR_INSTALL=/usr/local/bin
+DIR_DEFAULT=/etc/default
+DIR_SYSTEMD=/etc/systemd/system
+DIR_AVAHI=/etc/avahi/services
+DIR_UDEV=/etc/udev/rules.d
 define install_service_systemd
-	-systemctl stop $(1) 2>/dev/null || true
-	-systemctl disable $(1) 2>/dev/null || true
-	cp $(2).service $(SYSTEMD_SERVICE_DIR)/$(1).service
+	-systemctl stop $(2) 2>/dev/null || true
+	-systemctl disable $(2) 2>/dev/null || true
+	install -m 644 $(1).service $(DIR_SYSTEMD)/$(2).service
 	systemctl daemon-reload
-	systemctl enable $(1)
-	systemctl start $(1) || echo "Warning: Failed to start $(1)"
+	systemctl enable $(2)
+	systemctl start $(2) || echo "Warning: Failed to start $(2)"
 endef
 define install_service_avahi
-	cp $(2).service $(AVAHID_SERVICE_DIR)/$(1).service
+	install -m 644 $(1).service $(DIR_AVAHI)/$(2).service
 	systemctl restart avahi-daemon
 endef
 define install_rules_udev
-	cp $(2).rules $(UDEV_RULES_DIR)/$(1).rules
+	install -m 644 $(1).rules $(DIR_UDEV)/$(2).rules
 	udevadm control --reload
 	udevadm trigger
 endef
 install_target: $(TARGET)
-	install -m 755 $(TARGET) $(INSTALL_DIR)
-install_default: $(TARGET).default
-	cp $(TARGET).default $(DEFAULT_DIR)/$(TARGET)
+	install -m 755 $(TARGET) $(DIR_INSTALL)/$(INSTALL)
+install_default: $(CFG_SRC)
+	@echo "installing config from $(CFG_SRC)"
+	install -m 644 $(CFG_SRC) $(DIR_DEFAULT)/$(INSTALL)
 install_service: $(TARGET).service
-	$(call install_service_systemd,$(TARGET),$(TARGET))
+	$(call install_service_systemd,$(TARGET),$(INSTALL))
 install_avahi_service_gps: config/avahi-gps.service
-	$(call install_service_avahi,gpsd-gps,config/avahi-gps)
+	$(call install_service_avahi,config/avahi-gps,gpsd-gps)
 install_avahi_service_ntp: config/avahi-ntp.service
-	$(call install_service_avahi,gpsd-ntp,config/avahi-ntp)
+	$(call install_service_avahi,config/avahi-ntp,gpsd-ntp)
 install_udev_rules: config/99-gps.rules
-	$(call install_rules_udev,99-gps,config/99-gps)
+	$(call install_rules_udev,config/99-gps,99-gps)
 install_avahi_service: install_avahi_service_gps install_avahi_service_ntp
 install: install_target install_default install_service
 restart:
-	systemctl restart $(TARGET)
+	systemctl restart $(INSTALL)
 .PHONY: install install_target install_default install_service
-.PHONY: install_avahi_service_gps install_avahi_service_ntp
+.PHONY: install_avahi_service install_avahi_service_gps install_avahi_service_ntp install_udev_rules
 .PHONY: restart
 
+##
