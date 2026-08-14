@@ -23,7 +23,22 @@
 #include <time.h>
 #include <unistd.h>
 
+// Position source is selected at build time: GPS_SOURCE_NMEA reads NMEA straight from the serial device
+// and needs neither gpsd nor libgps; GPS_SOURCE_GPSD is the original libgps client.
+#if !defined(GPS_SOURCE_GPSD) && !defined(GPS_SOURCE_NMEA)
+#define GPS_SOURCE_NMEA
+#endif
+#if defined(GPS_SOURCE_GPSD) && defined(GPS_SOURCE_NMEA)
+#error "define exactly one of GPS_SOURCE_GPSD / GPS_SOURCE_NMEA"
+#endif
+
+#if defined(GPS_SOURCE_GPSD)
 #include <gps.h>
+#define GPS_SOURCE_NAME "gpsd"
+#else
+#include "gpsd_interface.h"
+#define GPS_SOURCE_NAME "nmea"
+#endif
 
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
@@ -45,9 +60,17 @@ static bool verbose = false;
 // ------------------------------------------------------------------------------------------------------------------------
 // ------------------------------------------------------------------------------------------------------------------------
 
+// In NMEA mode the pair is device path and baud rate rather than host and port.
+#if defined(GPS_SOURCE_GPSD)
 #define DEFAULT_GPSD_HOST "127.0.0.1"
 #ifndef DEFAULT_GPSD_PORT
 #define DEFAULT_GPSD_PORT "2947"
+#endif
+#else
+#define DEFAULT_GPSD_HOST "/dev/gps"
+#ifndef DEFAULT_GPSD_PORT
+#define DEFAULT_GPSD_PORT "9600"
+#endif
 #endif
 #define DEFAULT_PORT (2947 + 1)
 #define DEFAULT_LISTENANY false
@@ -352,7 +375,7 @@ static bool gps_connect(struct gps_data_t *const gps_handle, const char *const g
     gps_satellites_min = satellites_min;
     gps_hdop_max       = hdop_max;
     if (gps_open(gpsd_host, gpsd_port, gps_handle) != 0) {
-        fprintf(stderr, "Failed to connect to gpsd at %s:%s\n", gpsd_host, gpsd_port);
+        fprintf(stderr, "Failed to connect to " GPS_SOURCE_NAME " at %s:%s\n", gpsd_host, gpsd_port);
         return false;
     }
     gps_stream(gps_handle, WATCH_ENABLE | WATCH_JSON, NULL);
@@ -582,7 +605,9 @@ typedef struct {
 
 static const struct option options[] = { // defaults
     { "gpsd-host", required_argument, 0, 'H' },
+    { "device", required_argument, 0, 'H' }, // alias, reads better in NMEA mode
     { "gpsd-port", required_argument, 0, 'P' },
+    { "baud", required_argument, 0, 'P' }, // alias, reads better in NMEA mode
     { "port", required_argument, 0, 'p' },
     { "listenany", no_argument, 0, 'G' },
     { "filter", required_argument, 0, 'f' },
@@ -599,8 +624,13 @@ static const struct option options[] = { // defaults
 static void usage(const char *const prog) {
     printf("Usage: %s [options]\n", prog);
     printf("Options:\n");
+#if defined(GPS_SOURCE_GPSD)
     printf("  -H, --gpsd-host HOST     GPSD host (default %s)\n", DEFAULT_GPSD_HOST);
     printf("  -P, --gpsd-port PORT     GPSD port (default %s)\n", DEFAULT_GPSD_PORT);
+#else
+    printf("  -H, --device PATH        GPS serial device, read-only (default %s)\n", DEFAULT_GPSD_HOST);
+    printf("  -P, --baud RATE          GPS serial baud rate (default %s)\n", DEFAULT_GPSD_PORT);
+#endif
     printf("  -p, --port PORT          Client listen port (default %d)\n", DEFAULT_PORT);
     printf("  -G, --listenany          Client listen on INADDR_ANY (default INADDR_LOOPBACK)\n");
     printf("  -f, --filter MODE        Averaging filter: simple, window, kalman (default simple)\n");
@@ -696,8 +726,9 @@ int main(const int argc, char *const argv[]) {
         return EXIT_FAILURE;
     }
 
-    fprintf(stderr, "config: gpsd=%s:%s, port=%d, filter=%s, anchored=%s, sats/hdop=%d/%.1f, listen-any=%s, status=%ds\n", config.gpsd_host, config.gpsd_port, config.port,
-            get_filter_name(config.filter), config.anchored ? "yes" : "no", config.satellites_min, config.hdop_max, config.listenany ? "yes" : "no", config.interval_status);
+    fprintf(stderr, "config: " GPS_SOURCE_NAME "=%s:%s, port=%d, filter=%s, anchored=%s, sats/hdop=%d/%.1f, listen-any=%s, status=%ds\n", config.gpsd_host, config.gpsd_port,
+            config.port, get_filter_name(config.filter), config.anchored ? "yes" : "no", config.satellites_min, config.hdop_max, config.listenany ? "yes" : "no",
+            config.interval_status);
 
     if (!gps_connect(&gps_handle, config.gpsd_host, config.gpsd_port, config.satellites_min, config.hdop_max))
         return EXIT_FAILURE;

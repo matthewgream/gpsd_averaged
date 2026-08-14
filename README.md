@@ -1,7 +1,20 @@
 
-Simple mechanism to average gnss positions from gpsd and re-present them on a tcp port in json.
+Simple mechanism to average gnss positions and re-present them on a tcp port in json.
 For an anchored position, on a consumer grade ublox gnss device, this can quickly stablise to a horizontal uncertainty of ~<1m and near zero vertically.
 Included are config defaults and systemd service files (plus those also for gpsd).
+
+The position source is selected at build time:
+
+```
+make                     # GPS_SOURCE=NMEA (default): reads the serial device directly, no gpsd, no libgps
+make GPS_SOURCE=GPSD     # the libgps client, requires gpsd (make install-dev for libgps-dev)
+```
+
+NMEA mode opens the device read-only and parses GGA and GSA, reporting one fix per epoch as gpsd would. It
+suits lightweight systems where gpsd is more than is needed; gpsd remains the better choice when the device
+must be shared between clients, autodetected, or driven over a binary protocol, or when PPS is in use. The
+`--gpsd-host`/`--gpsd-port` options are then the device path and baud rate, and are also spelled
+`--device`/`--baud`; `make install` picks the matching systemd unit for the build.
 
 ```
 root@adsb:/opt/gpsd_averaged# ./gpsd_averaged --help
