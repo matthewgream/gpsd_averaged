@@ -1,0 +1,14 @@
+[Unit]
+Description=GPS Position Averaging Daemon (direct NMEA)
+After=dev-gps.device
+Wants=dev-gps.device
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/default/gpsd_averaged
+ExecStart=/usr/local/bin/gpsd_averaged $GPSD_AVERAGED_OPTIONS
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
