@@ -229,13 +229,18 @@ static int gps_read(struct gps_data_t *const gps_handle, char *const message, co
 
     gps_handle->set = 0; // "set" describes this report only, as in libgps
 
-    // A line longer than the buffer can only be corruption: drop it rather than wedging on a full buffer
-    if (gps_handle->buffer_length >= sizeof(gps_handle->buffer) - 1)
-        gps_handle->buffer_length = 0;
+    // A line longer than the buffer can only be corruption: drop it rather than wedging on a full buffer.
+    // The length is held in a local so that the read offset and the read count visibly derive from the one
+    // value. Taken separately from the struct they are ranged independently, the pair then appears able to
+    // overshoot the array, and _FORTIFY_SOURCE=3 (default on Ubuntu's gcc) rejects the call outright.
+    size_t used = gps_handle->buffer_length;
+    if (used >= sizeof(gps_handle->buffer) - 1)
+        used = 0;
+    gps_handle->buffer_length = used;
 
-    const ssize_t n = read(gps_handle->gps_fd, gps_handle->buffer + gps_handle->buffer_length, sizeof(gps_handle->buffer) - gps_handle->buffer_length - 1);
+    const ssize_t n = read(gps_handle->gps_fd, gps_handle->buffer + used, sizeof(gps_handle->buffer) - used - 1);
     if (n > 0) {
-        gps_handle->buffer_length += (size_t)n;
+        gps_handle->buffer_length = used + (size_t)n;
         gps_handle->buffer[gps_handle->buffer_length] = '\0';
     } else if (n < 0 && errno != EAGAIN) // EWOULDBLOCK is EAGAIN on Linux, so testing both would be a tautology
         return (int)n;
@@ -253,7 +258,10 @@ static int gps_read(struct gps_data_t *const gps_handle, char *const message, co
         begin = end + 1;
     }
 
-    gps_handle->buffer_length -= (size_t)(begin - gps_handle->buffer); // retain any partial trailing sentence
+    // Saturating: strpbrk stops at the NUL terminating the buffer, so consumed cannot exceed buffer_length,
+    // but subtracting without the guard would wrap rather than clamp if that ever ceased to hold.
+    const size_t consumed     = (size_t)(begin - gps_handle->buffer); // retain any partial trailing sentence
+    gps_handle->buffer_length = (consumed < gps_handle->buffer_length) ? gps_handle->buffer_length - consumed : 0;
     memmove(gps_handle->buffer, begin, gps_handle->buffer_length);
     gps_handle->buffer[gps_handle->buffer_length] = '\0';
 
